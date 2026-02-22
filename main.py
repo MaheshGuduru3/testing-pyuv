@@ -13,7 +13,7 @@ from dartgpt_rag.model.chat_model.chat_model import ChatModel
 from langgraph.graph import START , END , StateGraph 
 from langgraph.prebuilt import ToolNode , tools_condition
 # from IPython.display import Image , 
-from typing import Literal
+from typing import Literal,List,Any
 from pydantic import BaseModel
 from langchain_tavily import TavilySearch
 from langchain_community.retrievers import TavilySearchAPIRetriever
@@ -23,62 +23,66 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 
 
 # wikipedia_tool = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper(top_k_results=3, load_all_available_meta=True))
-# tavily_model = TavilySearchAPIRetriever(k=3, api_key="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")
-tavily_tool = TavilySearch(tavily_api_key="")
 
-# res = ChatModel().load_chat_model().bind_tools([wikipedia_tool,tavily_tool])
-# r=res.invoke('what is java')
-# print(r,'jhvhg')
-
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+tavily_tool = TavilySearch(
+    tavily_api_key=""
+)
 class State(BaseModel):
-    message:str
-    choice:Literal['RAG', 'TAV']
-
-
-def rag_model_chat(state:State):
+    messages: List[Any]
+    choice: Literal["RAG", "LLM"]
+def rag_model_chat(state: State):
     chats = Chat()
-    results = chats.chat_with_docs(state.message)
-    return {"message": results}
+    result = chats.chat_with_docs(state.messages[-1].content)
 
-def tavily_model_chat(state:State):
-     result = ChatModel()
-     call_tool = result.load_chat_model().bind_tools([tavily_tool])
-     tool_res = call_tool.invoke(state.message)
-     return { "message": tool_res }
-
-
-def get_model_chat(state:State):
-    if(state.choice == 'RAG'):
-        return 'RAG'
-    else:
-        return 'TAV'
-
-
-
-
-
+    return {
+        "messages": state.messages + [AIMessage(content=result)]
+    }
+def tavily_model_chat(state: State):
+    model = ChatModel().load_chat_model().bind_tools([tavily_tool])
+    response = model.invoke(state.messages)
+    print(response,'hcfg')
+    return {
+        "messages": state.messages + [response]
+    }
+def get_model_chat(state: State):
+    return state.choice
 graph = StateGraph(State)
 
-graph.add_node('RAG', rag_model_chat)
-graph.add_node('TAV', tavily_model_chat)
+graph.add_node("RAG", rag_model_chat)
+graph.add_node("LLM", tavily_model_chat)
+graph.add_node("TOOLS", ToolNode([tavily_tool]))
 
 graph.add_conditional_edges(
     START,
     get_model_chat,
     {
         "RAG": "RAG",
-        "TAV": "TAV"
-    },
-   
+        "LLM": "LLM",
+    }
 )
 
 graph.add_edge("RAG", END)
-graph.add_edge("TAV", END)
+
+graph.add_conditional_edges(
+    "LLM",
+    tools_condition,
+)
+
+graph.add_edge("TOOLS", "LLM")
+
+# graph.add_edge("LLM", END)
 
 app = graph.compile()
 
+res = app.invoke(
+    {
+        "messages": [HumanMessage(content="what is java")],
+        "choice": "LLM",
+    }
+)
 
-res = app.invoke({ "message": "what is java" , "choice": 'TAV'})
+print(res)
 
 print(res,'hgvhg')
 
